@@ -5,61 +5,61 @@ const cors = require('cors');
 const app = express();
 const port = 3000;
 
-// This configuration is correct.
+// This MUST be the correct root domain of your Netlify site
 const allowedOrigin = 'https://stellular-sprite-eafc19.netlify.app';
-const corsOptions = {
-  origin: allowedOrigin,
-};
-app.use(cors(corsOptions));
 
-// Increase the data limit for receiving HTML content
+const corsOptions = { origin: allowedOrigin };
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 
 app.post('/generate-pdf', async (req, res) => {
-  const { html } = req.body;
+  const { html, css } = req.body;
 
   if (!html) {
     return res.status(400).send('HTML content is required');
   }
 
-  // --- CRITICAL FIX FOR PUPPETEER ---
-  // Add the '--no-sandbox' arguments for containerized environments
+  // HERE IS THE CRITICAL PART
+  const fullHtmlDoc = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        
+        <!-- This tells Puppeteer where to find relative files like css/style.css -->
+        <base href="${allowedOrigin}">
+
+        <!-- This injects your <link rel="stylesheet" href="css/style.css"> tag -->
+        ${css}
+      </head>
+      <body>
+        ${html}
+      </body>
+    </html>
+  `;
+
+  // ... (the rest of your puppeteer launch and PDF generation code is correct)
   let browser;
   try {
-    browser = await puppeteer.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-    // --- END OF CRITICAL FIX ---
-
+    browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
-    // Added waitUntil option to ensure all resources (like images) are loaded
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    
+    // Using networkidle0 gives the browser time to fetch the external CSS file
+    await page.setContent(fullHtmlDoc, { waitUntil: 'networkidle0' });
 
-    const pdfBuffer = await page.pdf({
-      format: 'A4',
-      printBackground: true, // Ensures CSS backgrounds are included in the PDF
-    });
-
+    const pdfBuffer = await page.pdf({ format: 'A4', printBackground: true });
     await browser.close();
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      'attachment; filename=generated-document.pdf'
-    );
+    res.setHeader('Content-Disposition', 'attachment; filename=document-with-styles.pdf');
     res.send(pdfBuffer);
   } catch (error) {
     console.error('Error during PDF generation:', error);
-    if (browser) {
-      await browser.close(); // Ensure the browser closes even if there's an error
-    }
+    if (browser) await browser.close();
     res.status(500).send('Error generating PDF');
   }
 });
 
 app.listen(port, () => {
-  console.log(
-    `Server is running. Listening for requests from ${allowedOrigin}`
-  );
-  console.log('Puppeteer is configured to run in a sandboxed environment.');
+  console.log(`Server is running. Listening for requests from ${allowedOrigin}`);
 });
